@@ -1,39 +1,45 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/hooks/useColorScheme';
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
+import { Stack } from "expo-router";
+import { PaperProvider, Appbar } from "react-native-paper";
+// import { useColorScheme } from "react-native";
+import { useState } from "react";
+import { lightTheme, darkTheme } from "@/const/Themes";
+import {
+  ThemeModeContext,
+  ThemeModeToggleContext,
+  ColorScheme,
+} from "@/const/ThemeModeContext";
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-  });
+  // const colorScheme = useColorScheme();
+  const [colorScheme, setColorScheme] = useState<ColorScheme>("light");
 
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
+  const handleThemeToggle = () => {
+    setColorScheme((prevScheme) => (prevScheme === "dark" ? "light" : "dark"));
+  };
 
-  if (!loaded) {
-    return null;
-  }
+  const theme = colorScheme === "dark" ? darkTheme : lightTheme;
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <PaperProvider theme={theme}>
+      <ThemeModeContext.Provider value={colorScheme}>
+        <ThemeModeToggleContext.Provider value={handleThemeToggle}>
+          <Stack
+            screenOptions={{
+              statusBarBackgroundColor: theme.colors.primaryContainer,
+              statusBarStyle: colorScheme === "dark" ? "light" : "dark",
+              navigationBarColor: theme.colors.surface,
+            }}
+          >
+            <Stack.Screen
+              name="(tabs)"
+              options={{
+                headerShown: false,
+              }}
+            />
+            <Stack.Screen name="+not-found" />
+          </Stack>
+        </ThemeModeToggleContext.Provider>
+      </ThemeModeContext.Provider>
+    </PaperProvider>
   );
 }
