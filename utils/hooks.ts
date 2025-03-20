@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { boundedRandomGaussian } from "@/utils/helpers";
 
 export const useToggle = (initialState = false) => {
   const [state, setState] = useState(initialState);
@@ -6,73 +7,109 @@ export const useToggle = (initialState = false) => {
   return [state, toggle] as const;
 };
 
-function boundedRandomGaussian(
-  mean: number,
-  stdDev: number,
-  min: number,
-  max: number
-) {
-  let u1 = Math.random();
-  let u2 = Math.random();
-  let z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2); // Box-Muller transform
-  const value = mean + z * stdDev;
-  if (value < min) return min;
-  else if (value > max) return max;
-  return Math.round(value);
-}
 export const useFakeBLE = () => {
-  const samples = useRef<number[]>([]);
-  if (samples.current.length === 0) {
-    samples.current = Array(100).fill(0);
-  }
-  const samplesStartIdx = useRef(0); // For circular buffer
+  // - Configuration
+  // -- Device settings
+  const sampleRate = 200; // Hz, MIGHT CHANGE
+  const samplesPerPacket = 7; // MIGHT CHANGE
+  const adcToMv = 0.00357; // ADC to mV conversion factor. 2mV / 560 ADC counts
+  // --
+  const maxSamples = 500;
+  // -
 
-  const [throttledSamples, setThrottledSamples] = useState(samples.current);
+  const sampleBuffer = useRef<number[]>([]); // Circular buffer for samples
+  if (sampleBuffer.current.length === 0) {
+    sampleBuffer.current = Array(maxSamples).fill(0);
+  }
+  const samplesStartIdx = useRef(0); // Start index for circular buffer
+
+  const [state, setState] = useState({
+    samples: [...sampleBuffer.current],
+    numSamplesSinceLastUpdate: 0,
+    timeElapsedSinceLastUpdate: 0,
+  });
+
+  const [isRunning, toggleRunning] = useToggle(false);
+
+  const bleUpdateInterval = 1000 / (sampleRate / samplesPerPacket); // ms
+  // - For periodic updates
+  const periodicUpdateFactor = 10;
+  const bleNotificationCounter = useRef(0);
+  // -
+
+  const lastUpdateSampleId = useRef(-1);
+  const lastUpdateTimestamp = useRef(Date.now());
 
   // Simulate BLE notification
-  useEffect(
-    useCallback(() => {
-      const interval = setInterval(() => {
-        const newSamples = [];
-        for (let i = 0; i < 7; i++) {
-          newSamples.push(boundedRandomGaussian(512, 100, 0, 1023));
-        }
-        onDataUpdate(newSamples);
-      }, 34);
+  const totalBLEsamples = useRef(123); // Start at random number
+  useEffect(() => {
+    if (!isRunning) return;
 
-      return () => {
-        clearInterval(interval);
-      };
-    }, []),
-    []
-  );
+    const interval = setInterval(() => {
+      const newSamples = [];
+      for (let i = 0; i < samplesPerPacket; i++) {
+        newSamples.push(boundedRandomGaussian(512, 200, 0, 1023));
+        totalBLEsamples.current++;
+      }
+      onDataUpdate(newSamples, totalBLEsamples.current, samplesPerPacket);
+    }, bleUpdateInterval); // Calculate packet interval
 
-  // Throttle updates to prevent rendering too often
-  useEffect(
-    useCallback(() => {
-      const interval = setInterval(() => {
-        setThrottledSamples(samples.current.slice(0));
-      }, 500);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isRunning]);
 
-      return () => {
-        clearInterval(interval);
-      };
-    }, []),
-    []
-  );
+  // New data received from BLE
+  const onDataUpdate = useCallback(
+    (emgSamples: number[], sampleId: number, numSamples: number) => {
+      // If first sample initialize lastUpdate info
+      if (lastUpdateSampleId.current < 0) {
+        lastUpdateSampleId.current = sampleId - numSamples - 1;
+        lastUpdateTimestamp.current = Date.now();
+      }
 
-  const onDataUpdate = useCallback((data: number[]) => {
-    // ADC to mV conversion factor
-    const adcToMv = 0.00357; // 2mV / 560 ADC counts
-    if (samples.current) {
-      data.forEach((sample) => {
+      emgSamples.forEach((sample) => {
         const emg_mv = (sample - 1024 / 2) * adcToMv; // Convert ADC value to mV
-        samples.current[samplesStartIdx.current] = emg_mv;
+        sampleBuffer.current[samplesStartIdx.current] = emg_mv;
         samplesStartIdx.current =
-          (samplesStartIdx.current + 1) % samples.current.length;
+          (samplesStartIdx.current + 1) % sampleBuffer.current.length;
+      });
+
+      // Update the state every few BLE packets
+      bleNotificationCounter.current++;
+      if (bleNotificationCounter.current % periodicUpdateFactor === 0) {
+        setState({
+          samples: [
+            // Rotate the circular buffer so the most recent samples are at the end
+            ...sampleBuffer.current.slice(samplesStartIdx.current),
+            ...sampleBuffer.current.slice(0, samplesStartIdx.current),
+          ],
+          numSamplesSinceLastUpdate: sampleId - lastUpdateSampleId.current,
+          timeElapsedSinceLastUpdate: Date.now() - lastUpdateTimestamp.current,
+        });
+        lastUpdateSampleId.current = sampleId;
+        lastUpdateTimestamp.current = Date.now();
+      }
+    },
+    []
+  );
+
+  // Reset samples when stopped
+  useEffect(() => {
+    if (!isRunning) {
+      sampleBuffer.current = Array(maxSamples).fill(0);
+      samplesStartIdx.current = 0;
+      setState({
+        samples: [...sampleBuffer.current],
+        numSamplesSinceLastUpdate: 0,
+        timeElapsedSinceLastUpdate: 0,
       });
     }
-  }, []);
+  }, [isRunning]);
 
-  return { throttledSamples };
+  return {
+    ...state,
+    isRunning,
+    toggleRunning,
+  };
 };

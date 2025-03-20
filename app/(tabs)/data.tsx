@@ -1,5 +1,5 @@
-import { RealTimeChart } from "@/components/RealTimeChart";
+import { AnimatedLiveChart } from "@/components/AnimatedLiveChart";
 
 export default function Data() {
-  return <RealTimeChart />;
+  return <AnimatedLiveChart />;
 }
