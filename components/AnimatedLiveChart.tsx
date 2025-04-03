@@ -1,224 +1,208 @@
-import { useCallback, useState, useMemo, useEffect, useRef } from "react";
 import { View, useWindowDimensions, StyleSheet } from "react-native";
-import { useFocusEffect, useNavigation } from "expo-router";
-import Animated, {
-  useSharedValue,
-  useAnimatedProps,
-  withTiming,
-  cancelAnimation,
-  Easing,
-} from "react-native-reanimated";
-import Svg, { Path, Line, Text as SvgText, G } from "react-native-svg";
+import React, {
+  useRef,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import { useTheme, Text, IconButton } from "react-native-paper";
 import { Divider } from "@/components/Divider";
-import { useToggle, useFakeBLE } from "@/utils/hooks";
+import { useFakeBLE } from "@/utils/hooks";
+import { useFocusEffect, useNavigation } from "expo-router";
+
+import { Canvas, Path } from "@shopify/react-native-skia";
+import { useSharedValue, withTiming } from "react-native-reanimated";
+
+const svgHeight = 400;
+const svgPadding = 5;
+const minData = -5;
+const maxData = 5;
 
 type Stats = {
-  current: number;
   min: number;
   max: number;
   average: number;
 };
 
-const AnimatedPath = Animated.createAnimatedComponent(Path);
-
-const height = 300;
-const maxData = 2;
-const minData = -2;
-
-const zoomAmount = 3;
-
 export const AnimatedLiveChart = () => {
   const theme = useTheme();
-
   const { width } = useWindowDimensions();
-  // const animatedData = useSharedValue(Array<number>(numSamples).fill(0));
-  const animatedSamples = useSharedValue<number[]>([]);
-  const animatedXMovement = useSharedValue(0);
-  const animatedXOffset = useSharedValue(0);
-
-  const [stats, setStats] = useState<Stats>({
-    current: 0,
-    min: 0,
-    max: 0,
-    average: 0,
-  });
-
-  const [zoom, handleZoom] = useToggle();
 
   const {
-    samples,
-    numSamplesSinceLastUpdate,
-    timeElapsedSinceLastUpdate,
+    sampleBuffer,
+    sampleBufferIdx,
+    samplesPerPacket,
+    lastUpdateTimestamp,
     isRunning,
     toggleRunning,
-  } = useFakeBLE();
+  } = useFakeBLE(); // Ref of circular sample buffer
 
-  // Saving previously received samples for animation
-  const prevSamples = useRef<number[]>([]);
-  const prevNumSamplesSinceLastUpdate = useRef(0);
+  const aFrameId = useRef<number | null>(null); // Store animation frame ID to be able to cancel it
 
-  const handlePause = useCallback(() => {
-    if (isRunning) {
-      cancelAnimation(animatedXMovement);
-      toggleRunning();
-      prevSamples.current = [];
+  const path = useSharedValue("");
+
+  const animStartTime = useRef<number | null>(null);
+  const animDuration = useRef<number | null>(null);
+  const animProgress = useRef<number | null>(null);
+
+  // Update path on every animationFrame
+  const updateGraph = (timestamp: number) => {
+    if (!path) return;
+
+    // Left-scrolling animation between updates to smooth out movement
+    if (lastUpdateTimestamp.current) {
+      if (animStartTime.current) {
+        if (animStartTime.current != lastUpdateTimestamp.current) {
+          animDuration.current =
+            lastUpdateTimestamp.current - animStartTime.current;
+          animStartTime.current = lastUpdateTimestamp.current;
+        }
+        if (animDuration.current) {
+          animProgress.current =
+            (timestamp - animStartTime.current) / animDuration.current;
+        }
+      } else {
+        animStartTime.current = lastUpdateTimestamp.current;
+      }
     }
-  }, [isRunning, toggleRunning]);
+
+    path.value = sampleBuffer.current
+      .map((_, idx) => {
+        const fixedIdx =
+          (idx + sampleBufferIdx.current) % sampleBuffer.current.length;
+        const x =
+          (idx -
+            (animProgress.current
+              ? animProgress.current * samplesPerPacket
+              : 0)) *
+          (width / sampleBuffer.current.length);
+        const y =
+          svgHeight -
+          ((sampleBuffer.current[fixedIdx] - minData) / (maxData - minData)) *
+            svgHeight;
+        return `${idx === 0 ? "M" : "L"} ${x} ${y} `;
+      })
+      .join(" ");
+
+    if (isRunning) {
+      aFrameId.current = requestAnimationFrame(updateGraph); // Call this function again on the next animation frame
+    }
+  };
+
+  // Start the repeating animation frame function on mount
+  useEffect(() => {
+    if (!isRunning) return;
+
+    aFrameId.current = requestAnimationFrame(updateGraph);
+
+    // Cleanup on unmount
+    return () => {
+      if (aFrameId.current) {
+        cancelAnimationFrame(aFrameId.current);
+      }
+    };
+  }, [isRunning]);
 
   // Pause when navigating away
   const navigation = useNavigation();
   useEffect(() => {
     const unsubscribe = navigation.addListener("blur", () => {
-      handlePause();
+      if (isRunning) {
+        toggleRunning();
+      }
     });
 
     return unsubscribe;
-  }, [navigation, handlePause]);
+  }, [navigation, isRunning, toggleRunning]);
 
-  // New samples received
-  useFocusEffect(
-    useCallback(() => {
-      if (isRunning) {
-        // Keep track of previously received samples for animation
-        // Update path from previous samples
-        animatedSamples.value = [...prevSamples.current];
-        animatedXOffset.value = prevNumSamplesSinceLastUpdate.current;
-        // Calculate statistics from previous samples
-        if (prevSamples.current.length > 0) {
-          let min = Number.MAX_VALUE;
-          let max = Number.MIN_VALUE;
-          let sum = 0;
-          prevSamples.current.forEach((sample) => {
-            min = Math.min(min, sample);
-            max = Math.max(max, sample);
-            sum += sample;
-          });
-          const average = sum / prevSamples.current.length;
-          setStats({
-            current: prevSamples.current[prevSamples.current.length - 1],
-            min,
-            max,
-            average,
-          });
-        }
+  // const YAxis = useMemo(() => {
+  //   const ticks = [];
+  //   const numTicks = 10;
+  //   const tickSpacing = svgHeight / numTicks;
 
-        prevSamples.current = samples;
-        prevNumSamplesSinceLastUpdate.current = numSamplesSinceLastUpdate;
+  //   for (let i = 0; i <= numTicks; i++) {
+  //     const y = svgHeight - i * tickSpacing;
+  //     ticks.push(
+  //       <G key={`y-tick-${i}`} y={svgPadding}>
+  //         <Line
+  //           x1={0}
+  //           y1={y}
+  //           x2={10}
+  //           y2={y}
+  //           stroke={theme.colors.onSurface}
+  //           opacity={0.5}
+  //         />
+  //         <SvgText
+  //           x={15}
+  //           y={y + 3}
+  //           fontSize="10"
+  //           textAnchor="start"
+  //           fill={theme.colors.onSurface}
+  //           opacity={0.5}
+  //         >
+  //           {(minData + (maxData - minData) * (i / numTicks)).toFixed(0)}
+  //         </SvgText>
+  //       </G>
+  //     );
+  //   }
+  //   return ticks;
+  // }, [theme]);
 
-        // restart left-scrolling animation
-        animatedXMovement.value = 0;
-        if (numSamplesSinceLastUpdate && timeElapsedSinceLastUpdate) {
-          animatedXMovement.value = withTiming(numSamplesSinceLastUpdate, {
-            duration: timeElapsedSinceLastUpdate,
-            easing: Easing.linear,
-          });
-
-          return () => {
-            cancelAnimation(animatedXMovement);
-          };
-        }
-      }
-    }, [
-      samples,
-      numSamplesSinceLastUpdate,
-      timeElapsedSinceLastUpdate,
-      isRunning,
-    ])
-  );
-
-  const animatedPropsPath = useAnimatedProps(() => {
-    const points = animatedSamples.value.map((value, index) => {
-      const x =
-        (width / (animatedSamples.value.length - animatedXOffset.value)) *
-          (zoom ? zoomAmount : 1) *
-          (index - animatedXMovement.value) -
-        (zoom ? width * (zoomAmount - 1) : 0);
-      const y = height - ((value - minData) / (maxData - minData)) * height;
-      return { x, y };
-    });
-
-    const path = points.reduce((acc, point, index, arr) => {
-      if (index === 0) {
-        return `M${point.x},${point.y}`;
-      }
-      return `${acc} L${point.x},${point.y}`;
-    }, "");
-
-    return {
-      d: path,
-    };
+  // -- Stats
+  const [stats, setStats] = useState<Stats>({
+    average: 0,
+    min: 0,
+    max: 0,
   });
 
-  const YAxis = useMemo(() => {
-    const ticks = [];
-    const numTicks = 4;
-    const tickSpacing = height / numTicks;
+  useFocusEffect(
+    useCallback(() => {
+      const interval = setInterval(() => {
+        let sum = 0;
+        let min = Infinity;
+        let max = -Infinity;
+        sampleBuffer.current.forEach((val) => {
+          if (val < min) min = val;
+          if (val > max) max = val;
+          sum += val;
+        });
+        setStats({
+          average: sum / (sampleBuffer.current.length || 1),
+          min,
+          max,
+        });
+      }, 1000);
 
-    for (let i = 0; i <= numTicks; i++) {
-      const y = height - i * tickSpacing;
-      ticks.push(
-        <G key={`y-tick-${i}`}>
-          <Line
-            x1={0}
-            y1={y}
-            x2={10}
-            y2={y}
-            stroke={theme.colors.onSurface}
-            opacity={0.5}
-          />
-          <SvgText
-            x={15}
-            y={y + 3}
-            fontSize="10"
-            textAnchor="start"
-            fill={theme.colors.onSurface}
-            opacity={0.5}
-          >
-            {(minData + (maxData - minData) * (i / numTicks)).toFixed(1)}
-          </SvgText>
-        </G>
-      );
-    }
-
-    return ticks;
-  }, [theme]);
+      return () => clearInterval(interval);
+    }, [])
+  );
+  // --
 
   return (
     <View style={styles.container}>
       <Text variant="headlineMedium">Live sensor data</Text>
       <Divider noMargin />
-      <Svg width={width} height={height}>
-        <AnimatedPath
-          animatedProps={animatedPropsPath}
-          fill="none"
-          stroke={theme.colors.secondary}
+      <Canvas style={{ width: width, height: svgHeight }} mode="continuous">
+        <Path
+          path={path}
+          color={theme.colors.secondary}
+          style="stroke"
           strokeWidth={1}
         />
-        {YAxis}
-      </Svg>
+      </Canvas>
       <Divider noMargin />
       <View style={styles.container}>
         <View style={styles.buttonRow}>
           <IconButton
             icon={isRunning ? "pause" : "play"}
             size={28}
-            onPress={isRunning ? handlePause : toggleRunning}
+            onPress={toggleRunning}
             mode={isRunning ? "contained" : "outlined"}
             selected={isRunning}
           />
-          <IconButton
-            icon="magnify-scan"
-            size={28}
-            onPress={handleZoom}
-            style={styles.zoomButton}
-            mode={zoom ? "contained" : "outlined"}
-            selected={zoom}
-          />
         </View>
         <Divider noMargin />
-        <Text variant="headlineMedium">{`${stats.current.toFixed(2)} mV`}</Text>
-        <Text>Statistics for the last {samples.length} samples:</Text>
         <View style={styles.statsContainer}>
           <View style={styles.statsItem}>
             <Text>Minimum</Text>
@@ -243,7 +227,7 @@ const styles = StyleSheet.create({
     width: "100%",
     flex: 1,
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     gap: 20,
   },
   buttonRow: {
