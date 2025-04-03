@@ -11,8 +11,14 @@ import { Divider } from "@/components/Divider";
 import { useFakeBLE } from "@/utils/hooks";
 import { useFocusEffect, useNavigation } from "expo-router";
 
-import { Canvas, Path } from "@shopify/react-native-skia";
-import { useSharedValue, withTiming } from "react-native-reanimated";
+import {
+  Canvas,
+  Path,
+  Group,
+  Text as SkiaText,
+  useFont,
+} from "@shopify/react-native-skia";
+import { useSharedValue } from "react-native-reanimated";
 
 const svgHeight = 400;
 const svgPadding = 5;
@@ -78,10 +84,11 @@ export const AnimatedLiveChart = () => {
               : 0)) *
           (width / sampleBuffer.current.length);
         const y =
-          svgHeight -
+          svgHeight +
+          svgPadding -
           ((sampleBuffer.current[fixedIdx] - minData) / (maxData - minData)) *
             svgHeight;
-        return `${idx === 0 ? "M" : "L"} ${x} ${y} `;
+        return `${idx === 0 ? "M" : " L"} ${x} ${y}`;
       })
       .join(" ");
 
@@ -116,38 +123,37 @@ export const AnimatedLiveChart = () => {
     return unsubscribe;
   }, [navigation, isRunning, toggleRunning]);
 
-  // const YAxis = useMemo(() => {
-  //   const ticks = [];
-  //   const numTicks = 10;
-  //   const tickSpacing = svgHeight / numTicks;
+  const font = useFont(require("@/assets/fonts/SpaceMono-Regular.ttf"), 11);
+  const YAxis = useMemo(() => {
+    const ticks = [];
+    const numTicks = 10;
+    const tickSpacing = svgHeight / numTicks;
 
-  //   for (let i = 0; i <= numTicks; i++) {
-  //     const y = svgHeight - i * tickSpacing;
-  //     ticks.push(
-  //       <G key={`y-tick-${i}`} y={svgPadding}>
-  //         <Line
-  //           x1={0}
-  //           y1={y}
-  //           x2={10}
-  //           y2={y}
-  //           stroke={theme.colors.onSurface}
-  //           opacity={0.5}
-  //         />
-  //         <SvgText
-  //           x={15}
-  //           y={y + 3}
-  //           fontSize="10"
-  //           textAnchor="start"
-  //           fill={theme.colors.onSurface}
-  //           opacity={0.5}
-  //         >
-  //           {(minData + (maxData - minData) * (i / numTicks)).toFixed(0)}
-  //         </SvgText>
-  //       </G>
-  //     );
-  //   }
-  //   return ticks;
-  // }, [theme]);
+    for (let i = 0; i <= numTicks; i++) {
+      const y = svgHeight + svgPadding - i * tickSpacing;
+      const num = minData + (maxData - minData) * (i / numTicks);
+      ticks.push(
+        <Group key={`y-tick-${i}`}>
+          <Path
+            path={`M 0 ${y} L 10 ${y}`}
+            color={theme.colors.onSurface}
+            opacity={0.5}
+            style="stroke"
+            strokeWidth={1}
+          />
+          <SkiaText
+            x={15}
+            y={y + 3}
+            opacity={0.5}
+            font={font}
+            color={theme.colors.onSurface}
+            text={num < 0 ? num.toFixed(0) : ` ${num.toFixed(0)}`}
+          />
+        </Group>
+      );
+    }
+    return <Group>{ticks}</Group>;
+  }, [theme, font]);
 
   // -- Stats
   const [stats, setStats] = useState<Stats>({
@@ -156,6 +162,7 @@ export const AnimatedLiveChart = () => {
     max: 0,
   });
 
+  // Calculate stats every X ms
   useFocusEffect(
     useCallback(() => {
       const interval = setInterval(() => {
@@ -183,13 +190,17 @@ export const AnimatedLiveChart = () => {
     <View style={styles.container}>
       <Text variant="headlineMedium">Live sensor data</Text>
       <Divider noMargin />
-      <Canvas style={{ width: width, height: svgHeight }} mode="continuous">
+      <Canvas
+        style={{ width: width, height: svgHeight + svgPadding * 2 }}
+        mode="continuous"
+      >
         <Path
           path={path}
           color={theme.colors.secondary}
           style="stroke"
           strokeWidth={1}
         />
+        {YAxis}
       </Canvas>
       <Divider noMargin />
       <View style={styles.container}>
