@@ -3,9 +3,11 @@ import React from "react";
 import { Icon } from "react-native-paper";
 import { useTheme } from "react-native-paper";
 import { HapticTab } from "@/components/HapticTab";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabLayout() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
@@ -22,11 +24,13 @@ export default function TabLayout() {
         },
         sceneStyle: {
           backgroundColor: theme.colors.primaryContainer,
-          paddingHorizontal: 10,
-          paddingVertical: 20,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+          paddingBottom: 10,
+          paddingTop: insets.top,
         },
         tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.onSurface,
+        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
         tabBarButton: HapticTab,
       }}
     >
