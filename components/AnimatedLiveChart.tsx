@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import { useTheme, Text, IconButton } from "react-native-paper";
 import { Divider } from "@/components/Divider";
-import { useFakeBLE } from "@/utils/hooks";
+import { useFakeBLE, useComponentSize } from "@/utils/hooks";
 import { useFocusEffect, useNavigation } from "expo-router";
 
 import {
@@ -20,7 +20,6 @@ import {
 } from "@shopify/react-native-skia";
 import { useSharedValue } from "react-native-reanimated";
 
-const svgHeight = 400;
 const svgPadding = 5;
 const minData = -5;
 const maxData = 5;
@@ -34,6 +33,8 @@ type Stats = {
 export const AnimatedLiveChart = () => {
   const theme = useTheme();
   const { width } = useWindowDimensions();
+  const [canvasSize, onLayoutCanvas] = useComponentSize(); // Get size of Canvas after flex sizing
+  const canvasHeight = canvasSize?.height || 0;
 
   const {
     sampleBuffer,
@@ -84,10 +85,10 @@ export const AnimatedLiveChart = () => {
               : 0)) *
           (width / sampleBuffer.current.length);
         const y =
-          svgHeight +
+          canvasHeight -
           svgPadding -
           ((sampleBuffer.current[fixedIdx] - minData) / (maxData - minData)) *
-            svgHeight;
+            (canvasHeight - svgPadding * 2);
         return `${idx === 0 ? "M" : " L"} ${x} ${y}`;
       })
       .join(" ");
@@ -127,24 +128,22 @@ export const AnimatedLiveChart = () => {
   const YAxis = useMemo(() => {
     const ticks = [];
     const numTicks = 10;
-    const tickSpacing = svgHeight / numTicks;
+    const tickSpacing = (canvasHeight - svgPadding * 2) / numTicks;
 
     for (let i = 0; i <= numTicks; i++) {
-      const y = svgHeight + svgPadding - i * tickSpacing;
+      const y = canvasHeight - svgPadding - i * tickSpacing;
       const num = minData + (maxData - minData) * (i / numTicks);
       ticks.push(
         <Group key={`y-tick-${i}`}>
           <Path
             path={`M 0 ${y} L 10 ${y}`}
             color={theme.colors.onSurface}
-            opacity={0.5}
             style="stroke"
             strokeWidth={1}
           />
           <SkiaText
             x={15}
             y={y + 3}
-            opacity={0.5}
             font={font}
             color={theme.colors.onSurface}
             text={num < 0 ? num.toFixed(0) : ` ${num.toFixed(0)}`}
@@ -165,6 +164,8 @@ export const AnimatedLiveChart = () => {
   // Calculate stats every X ms
   useFocusEffect(
     useCallback(() => {
+      if (!isRunning) return;
+
       const interval = setInterval(() => {
         let sum = 0;
         let min = Infinity;
@@ -182,7 +183,7 @@ export const AnimatedLiveChart = () => {
       }, 1000);
 
       return () => clearInterval(interval);
-    }, [])
+    }, [isRunning])
   );
   // --
 
@@ -191,8 +192,9 @@ export const AnimatedLiveChart = () => {
       <Text variant="headlineMedium">Live sensor data</Text>
       <Divider noMargin />
       <Canvas
-        style={{ width: width, height: svgHeight + svgPadding * 2 }}
+        style={{ flex: 1, width: width }}
         mode="continuous"
+        onLayout={onLayoutCanvas}
       >
         <Path
           path={path}
@@ -203,30 +205,34 @@ export const AnimatedLiveChart = () => {
         {YAxis}
       </Canvas>
       <Divider noMargin />
-      <View style={styles.container}>
-        <View style={styles.buttonRow}>
-          <IconButton
-            icon={isRunning ? "pause" : "play"}
-            size={28}
-            onPress={toggleRunning}
-            mode={isRunning ? "contained" : "outlined"}
-            selected={isRunning}
-          />
+      <View style={styles.buttonRow}>
+        <IconButton
+          icon={isRunning ? "pause" : "play"}
+          size={32}
+          onPress={toggleRunning}
+          mode={isRunning ? "contained" : "outlined"}
+          selected={isRunning}
+        />
+      </View>
+      <Divider noMargin />
+      <View style={styles.statsContainer}>
+        <View style={styles.statsItem}>
+          <Text variant="labelSmall">MIN</Text>
+          <Text variant="headlineSmall">{`${stats.min.toFixed(2)}${
+            stats.min < 0 ? " " : ""
+          }`}</Text>
         </View>
-        <Divider noMargin />
-        <View style={styles.statsContainer}>
-          <View style={styles.statsItem}>
-            <Text>Minimum</Text>
-            <Text>{stats.min.toFixed(2)}</Text>
-          </View>
-          <View style={styles.statsItem}>
-            <Text>Average</Text>
-            <Text>{stats.average.toFixed(2)}</Text>
-          </View>
-          <View style={styles.statsItem}>
-            <Text>Maximum</Text>
-            <Text>{stats.max.toFixed(2)}</Text>
-          </View>
+        <View style={styles.statsItem}>
+          <Text variant="labelSmall">AVG</Text>
+          <Text variant="headlineSmall">{`${stats.average.toFixed(2)}${
+            stats.average < 0 ? " " : ""
+          }`}</Text>
+        </View>
+        <View style={styles.statsItem}>
+          <Text variant="labelSmall">MAX</Text>
+          <Text variant="headlineSmall">{`${stats.max.toFixed(2)}${
+            stats.max < 0 ? " " : ""
+          }`}</Text>
         </View>
       </View>
     </View>
@@ -257,8 +263,5 @@ const styles = StyleSheet.create({
     flexBasis: 1,
     flexGrow: 1,
     alignItems: "center",
-  },
-  zoomButton: {
-    alignSelf: "flex-end",
   },
 });

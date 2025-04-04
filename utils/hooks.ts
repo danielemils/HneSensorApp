@@ -1,10 +1,28 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { boundedRandomGaussian } from "@/utils/helpers";
+import { LayoutChangeEvent } from "react-native";
 
 export const useToggle = (initialState = false) => {
   const [state, setState] = useState(initialState);
   const toggle = useCallback(() => setState((prev) => !prev), []);
   return [state, toggle] as const;
+};
+
+type UseComponentSizeReturn = [
+  { width: number; height: number } | null,
+  (event: LayoutChangeEvent) => void
+];
+export const useComponentSize = (): UseComponentSizeReturn => {
+  const [size, setSize] = useState<{ width: number; height: number } | null>(
+    null
+  );
+
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setSize({ width, height });
+  }, []);
+
+  return [size, onLayout];
 };
 
 export const useFakeBLE = () => {
